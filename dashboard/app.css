@@ -1,0 +1,24 @@
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;margin:0 auto;max-width:1100px;padding:16px 20px;color:#1a1a1a;background:#fff;line-height:1.45}
+h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:28px 0 8px}h3{font-size:15px;margin:16px 0 4px}
+p{margin:6px 0}.note{color:#444;font-size:14px}
+#validation{border:1px solid #999;background:#f7f7f2;padding:12px 14px;margin:14px 0}
+#validation h2{margin:0 0 6px;font-size:16px}
+#validation .eq{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
+#validation .yard{font-weight:700}
+#validation .foot{font-size:12px;color:#555}
+#views{margin:10px 0}#views a{margin-right:14px}
+#controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:12px 0}
+#controls label{font-size:13px}#controls select,#controls input{font:inherit;padding:2px 4px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{border-bottom:1px solid #ddd;padding:5px 7px;text-align:left;vertical-align:top}
+th{background:#f0f0ea}
+tbody tr:hover{background:#f6f6f0}
+td.num,th.num{text-align:right}
+a{color:#0645ad}
+#detail{border:1px solid #999;padding:12px 14px;margin:18px 0;background:#fbfbf8}
+#detail h2{margin-top:0}
+#detail ol{margin:6px 0;padding-left:22px}
+#detail .flag{color:#8a0000;font-weight:700}
+.badge{display:inline-block;background:#e8e8dd;border-radius:3px;padding:0 5px;font-size:12px}
+#audit-wrap table{font-size:12px}
+footer{border-top:1px solid #ccc;margin-top:24px;padding-top:8px;font-size:12px;color:#555}

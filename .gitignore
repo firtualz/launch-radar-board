@@ -1,0 +1,8 @@
+# Build outputs (never committed)
+out/
+
+# Logs
+*.log
+
+# OS / editor noise
+.DS_Store

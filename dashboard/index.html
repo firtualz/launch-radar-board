@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Radar: pre-token protocols ranked by implied value</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+<h1>Token Radar</h1>
+<p id="subtitle">Pre-token protocols, ranked by what a launch would be worth.</p>
+<p class="note">Snapshot: DefiLlama, <b id="snap-date"></b>. The board is every clean pre-token protocol (202 rows): the whole watchlist plus the other 162. Ranking is by implied value; ROI is a second view, not the ranking.</p>
+</header>
+<section id="validation" aria-label="Validation"></section>
+<nav id="views" aria-label="Views">
+<a href="#board">Board</a> <a href="#roi">Board by ROI</a> <a href="#audit">Audit (342)</a> <a href="#research">Research note</a>
+</nav>
+<section id="controls" aria-label="Sort and filter">
+<label>Sort <select id="sort"><option value="implied">Implied value</option><option value="roi">ROI index</option><option value="tvl">TVL</option><option value="growth">7-day change</option></select></label>
+<label>Category <select id="fcat"><option value="">All</option></select></label>
+<label>Chain <select id="fchain"><option value="">All</option></select></label>
+<label>Scope <select id="fscope"><option value="">All rows</option><option value="watchlist">Watchlist</option><option value="below">Not on watchlist</option></select></label>
+<label>ROI band <select id="froi"><option value="">All</option><option value="0-50">under 50</option><option value="50-100">50–100</option><option value="100-300">100–300</option><option value="300+">over 300</option></select></label>
+<label>Verdict <select id="fverdict"><option value="">All</option><option value="farm">farm</option><option value="thin">thin</option><option value="skip">skip</option></select></label>
+<label>Search <input id="q" type="search" placeholder="name or slug"></label>
+<p id="count"></p>
+</section>
+<main id="board-wrap"><table id="board-table"><thead><tr><th>#</th><th>Protocol</th><th>Category</th><th>Chains</th><th>TVL</th><th>Implied value</th><th>ROI</th><th>Verdict</th><th>Farm cost</th><th>Hours</th></tr></thead><tbody id="rows"></tbody></table></main>
+<section id="detail" aria-label="Protocol detail"></section>
+<section id="audit-wrap" aria-label="Audit">
+<h2>Audit: every pre-token protocol in the snapshot</h2>
+<p id="audit-count"></p>
+<label>Disposition <select id="faudit"><option value="">All 342</option><option value="board">On the board (202)</option><option value="dropped">Dropped (140)</option></select></label>
+<table id="audit-table"><thead><tr><th>Protocol</th><th>Category</th><th>TVL</th><th>Disposition</th><th>Reason</th></tr></thead><tbody id="audit-rows"></tbody></table>
+</section>
+<section id="research-view" aria-label="Research note">
+<h2>Research note</h2>
+<h3>Method, in plain words</h3>
+<p>Start from the 342 protocols in the snapshot that record no token. Drop the ones that are not a launch candidate: exchanges, bridges, staking products, and names that say "bridge", "wrapped" or "staked", or a versioned slug. That leaves 202 clean protocols. The board carries all 202, ranked by implied value.</p>
+<p>Implied value comes from a curve fitted to the 81 protocols that already trade: log10(market cap) = 2.2348 + 0.6143 × log10(TVL). The curve is then adjusted for each protocol's 7-day change, its age, and its category, and the combined adjustment is capped between 0.5× and 2.0×. Farm cost is priced from a fixed table of gas and time per chain; ROI is the implied value per dollar of farm cost, shown as an index where the median protocol scores 100.</p>
+<h3>What the data says</h3>
+<ol>
+<li><b>The curve cuts the giants.</b> Steakhouse Financial is rank 1 on both this board and the starter's, but the starter's flat 0.25×TVL rule says $543.6M while the comps-fitted curve says $85.3M. Large protocols trade at low multiples: Lido's market cap is 0.013× its TVL.</li>
+<li><b>USDD is a stablecoin, not a farm.</b> USDD sits at rank 5 with an implied $48.7M, but it is flagged as a stablecoin: the curve was fitted without stablecoins, so its implied value is not comparable to the others and it is not a farm recommendation.</li>
+<li><b>ROI reorders the board.</b> Onre is rank 8 by implied value but its farm costs only $15.53, so its ROI index is 764; the cheapest rows to farm are also the smallest to value, which is why ROI is a second view and never the ranking.</li>
+<li><b>The filter buys honesty, not accuracy.</b> Dropping 47 comps (38 by category, 9 by ratio) lifts R² from 0.194 to 0.281 and cuts the mean error from 986% to 327%, but the typical error does not move: median 85.9% either way. The filter removes the absurd ratios (one comp trades at 400× its TVL), not the noise.</li>
+<li><b>Sentora Curator is rank 2, not rank 1.</b> It holds $2.76B TVL, the largest of any clean pre-token protocol ($3.6M more than Steakhouse Financial), yet the curve prices its launch at $81.9M, below Steakhouse's $85.3M. The gap is age: Sentora was listed 407 days ago, Steakhouse 543, so the maturity multiplier is 0.75× against 0.80×. TVL alone does not decide the top.</li>
+</ol>
+<h3>Verdict: farm, thin or skip</h3>
+<p>Every row carries a verdict, from the snapshot alone — a transparent rule, not a prediction that a protocol will airdrop. The rule uses the ROI index (median 100), the stablecoin flag, TVL, listing age and the 7-day change: <b>farm</b> when the ROI index is at least 200, the 7-day change is at least −20%, TVL is at least $10M and the protocol was listed at least 90 days ago; <b>skip</b> when it is a stablecoin, or the ROI index is below 50, or the 7-day change is below −30%, or TVL is below $10M while the ROI index is below 100; <b>thin</b> otherwise. On this board: 34 farm, 114 thin, 54 skip. Four high-ROI rows are only thin because a farm gate blocks them: bittensor-dtao and nonce-capital are too young (56 and 45 days), b14g is falling (−28.5% in 7 days), theo-network-thusd is too young (65 days). The verdict measures value efficiency against cost from the snapshot, not a guarantee of any result.</p>
+<h3>Limitations</h3>
+<ul>
+<li>The curve explains only 28% of the variation (R² 0.281). Typical error is ~2.9×, and a quarter of comps are off by 7.1× or more. Treat every implied value as a yardstick, not a price target.</li>
+<li>The board is TVL-driven: the curve prices a launch from TVL, so the top rows are the largest protocols. A small protocol with a strong community can out-earn its implied value, and a large one can launch at a fraction of it.</li>
+<li>Farm steps are category × chain templates built from the snapshot, not an audit of each protocol's mechanism. Every mechanism step says "if the protocol offers it" and tells the farmer to check the protocol's own docs first.</li>
+<li>The data is frozen at 14 November 2026. TVL, listings and tokens change; a protocol that launches after the snapshot keeps its row here.</li>
+</ul>
+<h3>Disclaimer</h3>
+<p>Every implied value here is an estimate from the snapshot of 14 November 2026, not financial advice, and there is no guarantee any protocol launches a token or airdrops anything. Farm steps are category × chain templates from the snapshot, not an audit of each protocol's mechanism. The chain each farm step is priced on is an assumption (round-robin across the protocol's chains), so costs are shown as a low/base/high range, not a single number.</p>
+</section>
+<footer>
+<p>Disclaimer: every implied value here is an estimate from the snapshot of 14 November 2026, not financial advice, and there is no guarantee any protocol launches a token or airdrops anything. Farm steps are category × chain templates from the snapshot, not an audit of each protocol's mechanism. The chain each farm step is priced on is an assumption (round-robin across the protocol's chains), so costs are shown as a low/base/high range, not a single number. Model version <span id="mver"></span>.</p>
+</footer>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
