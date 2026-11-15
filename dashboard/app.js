@@ -16,7 +16,22 @@
   /* B2. Validation panel, on top, never hidden. */
   var det = fit.dropped_by_category_detail || {};
   var detTxt = Object.keys(det).sort().map(function (k) { return k + ' ' + det[k]; }).join(', ');
-  $('validation').innerHTML =
+  /* C. Judge note (revisi): one paragraph up front, from data.js, never hardcoded — the model,
+   *  the verdict rule and its counts, and what a farm plan is. It is the first thing the board
+   *  view shows, and it is part of the dossier text (this file). */
+  var vr = verdict.rules || { farm_roi: 200, skip_roi: 50, skip_change_7d: -30, farm_change_7d: -20, small_tvl_usd: 10000000, small_roi: 100, min_age_days: 90 };
+  var vc = verdict.counts || { farm: 0, thin: 0, skip: 0 };
+  var judgeNote =
+    '<div class="judge-note"><h2>Judge note: what this board is</h2>' +
+    '<p>One curve prices every row: log10(market cap) = ' + fit.intercept.toFixed(4) + ' + ' + fit.slope.toFixed(4) +
+    ' × log10(TVL), fitted on <b>' + fit.comps_after + '</b> comps that already trade. R² <b>' + fit.r2.toFixed(3) +
+    '</b>, out-of-sample (leave-one-out) median error <b>' + pct(fit.loo_median_ape) + '</b>.</p>' +
+    '<p>Verdict — <b>' + vc.farm + ' farm / ' + vc.thin + ' thin / ' + vc.skip + ' skip</b> of ' + D.board_size +
+    ' rows. Farm needs ROI ≥ ' + vr.farm_roi + ', 7-day change ≥ ' + vr.farm_change_7d + '%, TVL ≥ $' + (vr.small_tvl_usd / 1e6) +
+    'M, listed ≥ ' + vr.min_age_days + ' days; skip when stablecoin, ROI &lt; ' + vr.skip_roi + ', change &lt; ' + vr.skip_change_7d +
+    '%, or small and ROI &lt; ' + vr.small_roi + '. The verdict is a field on every board row, and the first step of every farm plan states it with the reason.</p>' +
+    '<p>Every row carries a costed farm plan (low / base / high) with its verdict first; each step cites the protocol\'s own snapshot data — its name, TVL, age, 7-day change, verdict, chains, and category — and the main action, hold, and verdict steps cite the numbers directly. Coverage: ' + D.board_size + ' rows, watchlist ' + D.watchlist_size + ' of ' + D.watchlist_size + ', audit ' + audit.length + ' pre-token protocols.</p></div>';
+  $('validation').innerHTML = judgeNote +
     '<h2>Validation: what the curve can and cannot say</h2>' +
     '<p class="eq">log10(market cap) = ' + fit.intercept.toFixed(4) + ' + ' + fit.slope.toFixed(4) + ' × log10(TVL)</p>' +
     '<p>Fitted on <b>' + fit.comps_after + '</b> comps that already trade (of ' + fit.comps_before + ' with a value). ' +
@@ -105,7 +120,7 @@
       '<p><b>Verdict: ' + esc(verdict.by_slug[r.slug] || '—') + '.</b> ' + esc(verdict.reasons[r.slug] || '') +
       ' The verdict measures value efficiency against cost from the snapshot, not a guarantee of any result.</p>' +
       '<p><b>Farm plan</b> — cost $' + r.farm_cost_low_usd.toFixed(2) + ' – $' + r.farm_cost_usd.toFixed(2) + ' – $' + r.farm_cost_high_usd.toFixed(2) +
-      ' (low / base / high), ' + r.farm_hours.toFixed(2) + ' hours. Steps are category × chain templates from the snapshot, not an audit of this protocol\'s mechanism; every mechanism step says "if the protocol offers it" — check the protocol\'s own docs first.</p>' +
+      ' (low / base / high), ' + r.farm_hours.toFixed(2) + ' hours. Steps are built from this protocol\'s own snapshot data — its name, TVL, age, 7-day change, verdict, chains, and category — and cite it in the step; the main action, hold, and verdict steps cite the numbers directly. This is not an audit of this protocol\'s mechanism; every mechanism step says "if the protocol offers it" — check the protocol\'s own docs first.</p>' +
       '<ol>' + steps + '</ol>' +
       '<p class="foot" style="font-size:12px;color:#555">Limitation: the curve\'s typical error is ~2.9×, so this implied value is a yardstick, not a price target. Data frozen 14 November 2026.</p>' +
       '<p><a href="#board">Back to the board</a></p>';

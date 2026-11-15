@@ -54,11 +54,11 @@ writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: board })}\n`);
 writeFileSync(join(out, 'data.js'), dataScript(radar));
 
 /** K6: the dashboard data must be the board, re-read from disk: same rows, same slugs, same
- *  ranks, same implied values. The board is the single source; data.js only compacts it. */
+ *  ranks, same implied values, same verdicts. The board is the single source; data.js only compacts it. */
 function checkConsistency(outDir: string): void {
-  const onDisk = JSON.parse(readFileSync(join(outDir, 'board.json'), 'utf8')) as { rows: { slug: string; rank: number; implied_value_usd: number; farm_steps: string[] }[] };
+  const onDisk = JSON.parse(readFileSync(join(outDir, 'board.json'), 'utf8')) as { rows: { slug: string; rank: number; implied_value_usd: number; verdict: string; farm_steps: string[] }[] };
   const dataText = readFileSync(join(outDir, 'data.js'), 'utf8');
-  const data = JSON.parse(dataText.replace(/^window\.RADAR=/, '').replace(/;\s*$/, '')) as { rows: { slug: string; rank: number; implied_value_usd: number }[] };
+  const data = JSON.parse(dataText.replace(/^window\.RADAR=/, '').replace(/;\s*$/, '')) as { rows: { slug: string; rank: number; implied_value_usd: number; verdict: string }[] };
   if (onDisk.rows.length !== data.rows.length) {
     process.stderr.write(`token radar: consistency: board.json has ${onDisk.rows.length} rows, data.js has ${data.rows.length}\n`);
     process.exit(1);
@@ -66,7 +66,7 @@ function checkConsistency(outDir: string): void {
   for (let i = 0; i < onDisk.rows.length; i++) {
     const b = onDisk.rows[i]!;
     const d = data.rows[i]!;
-    if (b.slug !== d.slug || b.rank !== d.rank || b.implied_value_usd !== d.implied_value_usd) {
+    if (b.slug !== d.slug || b.rank !== d.rank || b.implied_value_usd !== d.implied_value_usd || b.verdict !== d.verdict) {
       process.stderr.write(`token radar: consistency: row ${i + 1} differs between board.json and data.js\n`);
       process.exit(1);
     }
@@ -75,7 +75,7 @@ function checkConsistency(outDir: string): void {
       process.exit(1);
     }
   }
-  process.stdout.write(`token radar: consistency: data.js matches board.json on ${onDisk.rows.length} rows (slug, rank, implied value)\n`);
+  process.stdout.write(`token radar: consistency: data.js matches board.json on ${onDisk.rows.length} rows (slug, rank, implied value, verdict)\n`);
 }
 checkConsistency(out);
 

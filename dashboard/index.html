@@ -53,14 +53,14 @@
 <ul>
 <li>The curve explains only 28% of the variation (R² 0.281). Typical error is ~2.9×, and a quarter of comps are off by 7.1× or more. Treat every implied value as a yardstick, not a price target.</li>
 <li>The board is TVL-driven: the curve prices a launch from TVL, so the top rows are the largest protocols. A small protocol with a strong community can out-earn its implied value, and a large one can launch at a fraction of it.</li>
-<li>Farm steps are category × chain templates built from the snapshot, not an audit of each protocol's mechanism. Every mechanism step says "if the protocol offers it" and tells the farmer to check the protocol's own docs first.</li>
+<li>Farm steps are built from each protocol's own snapshot data — its name, TVL, age, 7-day change, verdict, chains, and category — and cite it in the step; the main action, hold, and verdict steps cite the numbers directly. Farm steps are not an audit of each protocol's mechanism. Every mechanism step says "if the protocol offers it" and tells the farmer to check the protocol's own docs first.</li>
 <li>The data is frozen at 14 November 2026. TVL, listings and tokens change; a protocol that launches after the snapshot keeps its row here.</li>
 </ul>
 <h3>Disclaimer</h3>
-<p>Every implied value here is an estimate from the snapshot of 14 November 2026, not financial advice, and there is no guarantee any protocol launches a token or airdrops anything. Farm steps are category × chain templates from the snapshot, not an audit of each protocol's mechanism. The chain each farm step is priced on is an assumption (round-robin across the protocol's chains), so costs are shown as a low/base/high range, not a single number.</p>
+<p>Every implied value here is an estimate from the snapshot of 14 November 2026, not financial advice, and there is no guarantee any protocol launches a token or airdrops anything. Farm steps are built from each protocol's own snapshot data, not an audit of each protocol's mechanism. The chain each farm step is priced on is an assumption (round-robin across the protocol's chains), so costs are shown as a low/base/high range, not a single number.</p>
 </section>
 <footer>
-<p>Disclaimer: every implied value here is an estimate from the snapshot of 14 November 2026, not financial advice, and there is no guarantee any protocol launches a token or airdrops anything. Farm steps are category × chain templates from the snapshot, not an audit of each protocol's mechanism. The chain each farm step is priced on is an assumption (round-robin across the protocol's chains), so costs are shown as a low/base/high range, not a single number. Model version <span id="mver"></span>.</p>
+<p>Disclaimer: every implied value here is an estimate from the snapshot of 14 November 2026, not financial advice, and there is no guarantee any protocol launches a token or airdrops anything. Farm steps are built from each protocol's own snapshot data, not an audit of each protocol's mechanism. The chain each farm step is priced on is an assumption (round-robin across the protocol's chains), so costs are shown as a low/base/high range, not a single number. Model version <span id="mver"></span>.</p>
 </footer>
 <script src="../data.js"></script>
 <script src="app.js"></script>

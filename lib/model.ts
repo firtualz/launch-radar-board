@@ -125,6 +125,10 @@ export interface BoardRow {
     age_days: number | null;
   };
   roi_index: number;
+  /** B2 (revisi). The farm/thin/skip verdict, computed from this row's own ROI index,
+   *  stablecoin flag, TVL, age and 7-day change by the same rule the dashboard states.
+   *  It lives in the row so board.json and data.js cannot disagree about it. */
+  verdict: Verdict;
   farm_cost_usd: number;
   farm_cost_low_usd: number;
   farm_cost_high_usd: number;
@@ -180,9 +184,9 @@ export interface AuditRow {
 
 /** Everything the dashboard needs: the board and the model it runs. The rows are the full board
  *  rows, so the detail view reads the farm plan and the factor breakdown from the same data the
- *  board table reads: one source, no fetch, no second copy. The verdict lives here, in data.js
- *  only — board.json keeps the official schema (slug, name, rank, implied_value_usd, farm_steps)
- *  and carries no verdict field. */
+ *  board table reads: one source, no fetch, no second copy. The verdict lives in each board row
+ *  (field `verdict`) and is surfaced here in data.js with its rule and reasons, so the board and
+ *  the dashboard cannot disagree about it. */
 export interface RadarData {
   as_of: string;
   source: string;
@@ -196,7 +200,8 @@ export interface RadarData {
   dropped_clean: number;
   rows: BoardRow[];
   audit: AuditRow[];
-  /** B2. The verdict, per slug, with the rule that fired and the counts: data.js only. */
+  /** B2. The verdict, per slug, with the rule that fired and the counts: surfaced from the
+   *  board rows' `verdict` field, so data.js and board.json always agree. */
   verdict: {
     rules: {
       farm_roi: number;
@@ -299,30 +304,33 @@ export function verdictFor(row: {
   return 'thin';
 }
 
-/** Why a row got its verdict, naming the rule that fired and the row's own numbers. */
+/** Why a row got its verdict, naming the rule that fired and the row's own numbers. The reason
+ *  names the protocol, so no two rows share the same reason text (the stablecoin reason used to
+ *  be one fixed sentence for every stablecoin row). */
 export function verdictReason(
-  row: { roi_index: number; stablecoin: boolean; tvl_usd: number; age_days: number | null; change_7d: number | null },
+  row: { name: string; roi_index: number; stablecoin: boolean; tvl_usd: number; age_days: number | null; change_7d: number | null },
   verdict: Verdict,
 ): string {
   const age = row.age_days ?? 365;
   const change = row.change_7d === null ? 'not recorded' : `${row.change_7d > 0 ? '+' : ''}${row.change_7d}%`;
-  if (row.stablecoin) return `Stablecoin: the curve was fitted without stablecoins, so its implied value is not comparable — skipped.`;
-  if (row.roi_index < VERDICT_SKIP_ROI) return `ROI index ${row.roi_index} is below ${VERDICT_SKIP_ROI}: the implied value per dollar of farm cost is less than half the median — skipped.`;
-  if (row.change_7d !== null && row.change_7d < VERDICT_SKIP_CHANGE_7D) return `7-day change ${change} is below ${VERDICT_SKIP_CHANGE_7D}%: the protocol is falling hard — skipped.`;
-  if (row.tvl_usd < VERDICT_SMALL_TVL_USD && row.roi_index < VERDICT_SMALL_ROI) {
-    return `TVL $${Math.round(row.tvl_usd).toLocaleString('en-US')} is below $10M and ROI index ${row.roi_index} is below ${VERDICT_SMALL_ROI}: small and below-median value per cost — skipped.`;
-  }
-  if (verdict === 'farm') {
-    return `ROI index ${row.roi_index} is at least ${VERDICT_FARM_ROI}, 7-day change ${change} is at least ${VERDICT_FARM_CHANGE_7D}%, TVL $${Math.round(row.tvl_usd).toLocaleString('en-US')} is at least $10M, listed ${age} days ago (at least ${VERDICT_MIN_AGE_DAYS}) — farm.`;
-  }
-  if (row.roi_index >= VERDICT_FARM_ROI) {
+  if (row.stablecoin) return `${row.name} is a stablecoin holding $${Math.round(row.tvl_usd).toLocaleString('en-US')} TVL: the curve was fitted without stablecoins, so its implied value is not comparable — skipped.`;
+  let body: string;
+  if (row.roi_index < VERDICT_SKIP_ROI) body = `ROI index ${row.roi_index} is below ${VERDICT_SKIP_ROI}: the implied value per dollar of farm cost is less than half the median — skipped.`;
+  else if (row.change_7d !== null && row.change_7d < VERDICT_SKIP_CHANGE_7D) body = `7-day change ${change} is below ${VERDICT_SKIP_CHANGE_7D}%: the protocol is falling hard — skipped.`;
+  else if (row.tvl_usd < VERDICT_SMALL_TVL_USD && row.roi_index < VERDICT_SMALL_ROI) {
+    body = `TVL $${Math.round(row.tvl_usd).toLocaleString('en-US')} is below $10M and ROI index ${row.roi_index} is below ${VERDICT_SMALL_ROI}: small and below-median value per cost — skipped.`;
+  } else if (verdict === 'farm') {
+    body = `ROI index ${row.roi_index} is at least ${VERDICT_FARM_ROI}, 7-day change ${change} is at least ${VERDICT_FARM_CHANGE_7D}%, TVL $${Math.round(row.tvl_usd).toLocaleString('en-US')} is at least $10M, listed ${age} days ago (at least ${VERDICT_MIN_AGE_DAYS}) — farm.`;
+  } else if (row.roi_index >= VERDICT_FARM_ROI) {
     const blocks: string[] = [];
     if (row.change_7d !== null && row.change_7d < VERDICT_FARM_CHANGE_7D) blocks.push(`7-day change ${change} is below ${VERDICT_FARM_CHANGE_7D}%`);
     if (row.tvl_usd < VERDICT_SMALL_TVL_USD) blocks.push(`TVL $${Math.round(row.tvl_usd).toLocaleString('en-US')} is below $10M`);
     if (age < VERDICT_MIN_AGE_DAYS) blocks.push(`listed ${age} days ago (below ${VERDICT_MIN_AGE_DAYS})`);
-    return `ROI index ${row.roi_index} is at least ${VERDICT_FARM_ROI}, but ${blocks.join('; ')}: not a farm — thin.`;
+    body = `ROI index ${row.roi_index} is at least ${VERDICT_FARM_ROI}, but ${blocks.join('; ')}: not a farm — thin.`;
+  } else {
+    body = `ROI index ${row.roi_index} is between ${VERDICT_SKIP_ROI} and ${VERDICT_FARM_ROI}: the value per cost is ordinary — thin.`;
   }
-  return `ROI index ${row.roi_index} is between ${VERDICT_SKIP_ROI} and ${VERDICT_FARM_ROI}: the value per cost is ordinary — thin.`;
+  return `${row.name}: ${body}`;
 }
 
 /** The comps the curve is fitted on, and how many the filter dropped for each reason. */
@@ -524,33 +532,61 @@ function actionDetail(p: SnapshotProtocol, capital: number, chain: string): stri
   return `If ${name} offers a second action on ${chain}, repeat the main action with half the capital; ${docs}`;
 }
 
-/** The wallet step, varied by how many chains the protocol runs on and how large it is: the
- *  same instruction in different words, never the same sentence on every row. */
-function walletText(p: SnapshotProtocol, chains: string[]): string {
+/** The wallet step, varied by how many chains the protocol runs on and how large it is — and
+ *  always naming the protocol, its capital and its TVL, so no two rows share the sentence.
+ *  Only snapshot data is cited; nothing is invented about the protocol. */
+function walletText(p: SnapshotProtocol, chains: string[], capital: number): string {
+  const tvl = Math.round(p.tvl_usd).toLocaleString('en-US');
   const n = chains.length;
-  if (n >= 3) return `Use one fresh wallet across the protocol's ${n} chains (or a separate wallet per chain), holding only the funds you plan to farm, and keep every seed phrase offline.`;
-  if (n === 2) return `Use one fresh wallet for ${chains[0]} and ${chains[1]}, holding only the funds you plan to farm, and keep its seed phrase offline.`;
-  if (p.tvl_usd >= 1_000_000_000) return `For a protocol this large, use a fresh wallet on ${chains[0]} that holds only the funds you plan to farm, and keep its seed phrase offline.`;
-  return `Use a fresh wallet on ${chains[0]} that holds only the funds you plan to farm, and keep its seed phrase offline.`;
+  if (n >= 3) return `Use one fresh wallet across ${p.name}'s ${n} chains (or a separate wallet per chain), holding only the $${capital} you plan to farm (TVL $${tvl}), and keep every seed phrase offline.`;
+  if (n === 2) return `Use one fresh wallet for ${p.name} on ${chains[0]} and ${chains[1]}, holding only the $${capital} you plan to farm (TVL $${tvl}), and keep its seed phrase offline.`;
+  if (p.tvl_usd >= 1_000_000_000) return `For ${p.name}, a protocol with $${tvl} TVL, use a fresh wallet on ${chains[0]} that holds only the $${capital} you plan to farm, and keep its seed phrase offline.`;
+  return `Use a fresh wallet on ${chains[0]} for ${p.name}, holding only the $${capital} you plan to farm (TVL $${tvl}), and keep its seed phrase offline.`;
 }
 
-/** The hold step, varied by the protocol's age: a young protocol earns a longer window. */
+/** The hold step, built from the protocol's own numbers: its name, its listing age, its TVL and
+ *  its 7-day change, so the sentence is about this protocol and no other. The hold itself still
+ *  comes from the age alone (30/45/60 days via holdDaysFor) — the numbers justify it, they do
+ *  not invent it. */
 function holdText(p: SnapshotProtocol, age: number | null, hold: number, capital: number): string {
-  const base = `Hold the position for at least ${hold} days so the activity is counted in more than one snapshot.`;
-  if (age !== null && age < 180) return `${base} The protocol is young, so the longer window is what counts.`;
-  if (age !== null && age >= 365) return `${base} The protocol is established, so a month is enough to register the activity.`;
-  if (p.tvl_usd >= 1_000_000_000) return `${base} A position this large is worth holding through the next snapshot.`;
-  return base;
+  const tvl = Math.round(p.tvl_usd).toLocaleString('en-US');
+  const change = p.change_7d === null ? null : `${p.change_7d > 0 ? '+' : ''}${p.change_7d}%`;
+  if (age === null) {
+    const changePart = change === null ? `7-day change not recorded` : `7-day change ${change}`;
+    return `Hold the $${capital} position in ${p.name} for at least ${hold} days. ${p.name}'s listing date is not recorded (TVL $${tvl}, ${changePart}), so keep the position through the next snapshot to make sure the activity registers.`;
+  }
+  if (age < 180) return `Hold the $${capital} position in ${p.name} for at least ${hold} days. ${p.name} was listed ${age} days ago with $${tvl} TVL, so the longer window is what counts — the activity needs two snapshots to register.`;
+  if (age < 365) {
+    const changePart = change === null ? `7-day change not recorded` : `7-day change ${change}`;
+    return `Hold the $${capital} position in ${p.name} for at least ${hold} days. ${p.name} was listed ${age} days ago and holds $${tvl} TVL (${changePart}), so the position needs to stay through the next snapshot.`;
+  }
+  return `Hold the $${capital} position in ${p.name} for at least ${hold} days. ${p.name} was listed ${age} days ago and holds $${tvl} TVL, so a month is enough to register the activity.`;
 }
 
-/** The claim step, varied by the protocol's category and chain count. */
+/** The claim step, varied by the protocol's category: each branch names the kind of claim to
+ *  look for in that category, and every branch names the protocol, so no two rows share the
+ *  sentence. Cautious words: a branch only says what kind of claim to look for — it never
+ *  guarantees the mechanism exists. Every claim is taken only from the link the protocol
+ *  itself publishes. */
 function claimText(p: SnapshotProtocol, chains: string[]): string {
   const c = (p.category ?? '').toLowerCase();
-  const multi = chains.length > 1 ? ` Check the rewards page on each chain you farmed.` : ``;
+  const chain = chainOf(p);
+  const tvl = Math.round(p.tvl_usd).toLocaleString('en-US');
+  const multi = chains.length > 1 ? ` Check the rewards page on each of the ${chains.length} chains you farmed.` : ``;
   const log = ` Then write the wallet, the dates and every transaction in a farm log.`;
-  if (c.includes('dex')) return `Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes; for a DEX, check the pool's rewards page too.${multi}${log}`;
-  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Before you withdraw, open the protocol's own rewards page and claim only from the link it publishes, then unwind any borrow before the deposit.${multi}${log}`;
-  return `Before you withdraw, open the protocol's own points or rewards page and claim only from the link it publishes.${multi}${log}`;
+  const fromLink = `claim only from the link ${p.name} publishes`;
+  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return `Before you withdraw from ${p.name}, open its rewards page and ${fromLink}, then unwind any borrow before the deposit.${multi}${log}`;
+  if (c.includes('dex')) return `Before you withdraw from ${p.name} on ${chain}, open the pool's rewards page and ${fromLink}; a DEX may also pay trading fees, so check the fee claim too.${multi}${log}`;
+  if (c.includes('yield') || c.includes('leveraged farm')) return `Before you withdraw from ${p.name}, open the vault page and claim the accrued yield once, ${fromLink}.${multi}${log}`;
+  if (c.includes('perpetual') || c.includes('derivative')) return `Before you withdraw from ${p.name}, close the hedge on ${chain} first, then ${fromLink}.${multi}${log}`;
+  if (c.includes('prediction')) return `Before you withdraw from ${p.name}, settle any open market positions first, then ${fromLink}.${multi}${log}`;
+  if (c.includes('curator') || c.includes('allocator')) return `Before you withdraw from ${p.name}, open the vault page and claim the accrued yield once, ${fromLink}.${multi}${log}`;
+  if (c.includes('stable')) return `Before you withdraw from ${p.name}, redeem the stable asset if the protocol offers it, then ${fromLink}.${multi}${log}`;
+  if (c.includes('rwa')) return `Before you withdraw from ${p.name}, check its backing report first, then ${fromLink}.${multi}${log}`;
+  if (c.includes('insurance')) return `Before you withdraw from ${p.name}, check the cover is settled first, then ${fromLink}.${multi}${log}`;
+  if (c.includes('basis')) return `Before you withdraw from ${p.name}, close the basis position on ${chain} first, then ${fromLink}.${multi}${log}`;
+  if (c.includes('restak') || c.includes('staking')) return `Before you withdraw from ${p.name}, unstake and claim rewards first, ${fromLink}.${multi}${log}`;
+  return `Before you withdraw from ${p.name} on ${chain}, open its own points or rewards page and ${fromLink}. ${p.name} holds $${tvl} TVL — claim before the position is closed.${multi}${log}`;
 }
 
 /** B3. The weekly step for rows outside the top 40: the category's recurring action, on the
@@ -585,27 +621,52 @@ function dataSentence(p: SnapshotProtocol, age: number | null): string {
   return `Snapshot data: ${p.name} holds $${tvl} TVL across ${n} chain${n === 1 ? '' : 's'}, ${agePart}, ${changePart}.`;
 }
 
+/** The verdict step: the first step of every farm plan. It states the verdict and the rule
+ *  that fired, with the row's own numbers (ROI index, TVL, age, 7-day change) — so it is
+ *  specific to this protocol by construction. It costs nothing to read, so it is NOT counted
+ *  in the farm cost: the cost is computed from the action steps only (see buildBoard). That
+ *  also breaks the circle — the verdict comes from the ROI index, which comes from the cost,
+ *  which must not depend on the verdict step. */
+export function verdictStep(verdict: Verdict, reason: string): FarmStep {
+  return { text: `Verdict: ${verdict}. ${reason}`, cost: 'no cost to read the verdict', time: '1 minute' };
+}
+
 /**
- * A protocol's farm plan. The step count is 5 + (chains - 1), at most 8: one step per extra chain,
- * the rest fixed. The top 40 get a mechanism-specific weekly step and a snapshot-data sentence on
- * the main action; the rest get the category template. The wallet, hold and claim steps are varied
- * by TVL band, category, age and chain count, so no boilerplate repeats word for word across rows.
- * Every step carries its own cost and time, from the cost table at the base level.
+ * A protocol's farm plan. The step count is 6 + (chains - 1), at most 9: the verdict step first,
+ * then one step per extra chain, the rest fixed. The top 40 get a mechanism-specific weekly step;
+ * every row gets a snapshot-data sentence on the main action, citing its own TVL, age and 7-day
+ * change. The wallet, hold and claim steps cite the protocol's name, capital, TVL, age and
+ * change, so no boilerplate repeats word for word across rows. Every step carries its own cost
+ * and time, from the cost table at the base level.
  */
-export function farmSteps(p: SnapshotProtocol, age: number | null, top40: boolean): FarmStep[] {
+export function farmSteps(p: SnapshotProtocol, age: number | null, top40: boolean, verdict: Verdict, reason: string): FarmStep[] {
+  return [verdictStep(verdict, reason), ...actionSteps(p, age, top40)];
+}
+
+/** The action steps of a farm plan (5 + (chains - 1), at most 8): wallet, main action, one step
+ *  per extra chain, a weekly step, hold, claim. The verdict step is added by farmSteps, not
+ *  here — the farm cost is computed from these steps alone, and the verdict is computed from
+ *  that cost, so the verdict step must not be one of them. */
+function actionSteps(p: SnapshotProtocol, age: number | null, top40: boolean): FarmStep[] {
   const chain = chainOf(p);
   const capital = capitalFor(p);
   const hold = holdDaysFor(age);
   const chains = p.chains.length > 0 ? p.chains : [chain];
   const extra = Math.min(chains.length - 1, 3);
   const weekly = top40 ? actionDetail(p, capital, chain) : weeklyText(p, chain);
-  const mainAction = top40 ? `${actionFor(p, capital, chain)} ${dataSentence(p, age)}` : actionFor(p, capital, chain);
+  const mainAction = `${actionFor(p, capital, chain)} ${dataSentence(p, age)}`;
   const steps: FarmStep[] = [
-    { text: walletText(p, chains), cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
+    { text: walletText(p, chains, capital), cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
     { text: mainAction, cost: `$${capital} of capital and a few dollars of gas`, time: '15 minutes to set up' },
   ];
   for (let i = 1; i <= extra; i++) {
-    steps.push({ text: actionFor(p, capital, chains[i]!), cost: `$${capital} of capital and a few dollars of gas`, time: '15 minutes to set up' });
+    const half = capital / 2;
+    const ordinal = i === 1 ? 'second' : i === 2 ? 'third' : 'fourth';
+    steps.push({
+      text: `On ${chains[i]}, do the same ${p.category ?? 'protocol'} action for ${p.name} again with half the capital ($${half}), so the position is recorded on a ${ordinal} chain; check the protocol's own docs first.`,
+      cost: `$${half} of capital and a few dollars of gas`,
+      time: '15 minutes to set up',
+    });
   }
   steps.push(
     { text: weekly, cost: 'about $2 of gas a week', time: '10 minutes a week' },
@@ -717,8 +778,12 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
 
+  /** The farm cost is computed from the action steps alone: the verdict step costs nothing to
+   *  read, and the verdict itself is computed from the ROI index, which is computed from this
+   *  cost — so the verdict step must not feed the cost, or the verdict would depend on itself.
+   *  The verdict step is added to the steps in the board map below, after the verdict is known. */
   const withCost = scored.map((s, i) => {
-    const steps = farmSteps(s.p, s.age, i < 40);
+    const steps = actionSteps(s.p, s.age, i < 40);
     const base = farmCost(s.p, steps.length, 1);
     const low = farmCost(s.p, steps.length, 0);
     const high = farmCost(s.p, steps.length, 2);
@@ -728,10 +793,29 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const medRatio = median(ratios);
 
   const board: BoardRow[] = withCost.map((w, i) => {
-    const steps = w.steps;
     const base = w.base;
     const low = w.low;
     const high = w.high;
+    const roi = Math.round(((w.implied / base.usd) / medRatio) * 100);
+    const verdict = verdictFor({
+      roi_index: roi,
+      stablecoin: isStablecoin(w.p),
+      tvl_usd: w.p.tvl_usd,
+      age_days: w.age,
+      change_7d: w.p.change_7d,
+    });
+    const reason = verdictReason(
+      {
+        name: w.p.name,
+        roi_index: roi,
+        stablecoin: isStablecoin(w.p),
+        tvl_usd: w.p.tvl_usd,
+        age_days: w.age,
+        change_7d: w.p.change_7d,
+      },
+      verdict,
+    );
+    const steps = [verdictStep(verdict, reason), ...w.steps];
     return {
       rank: i + 1,
       slug: w.p.slug,
@@ -755,7 +839,8 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
         combined_multiplier: round4(w.combined),
         age_days: w.age,
       },
-      roi_index: Math.round(((w.implied / base.usd) / medRatio) * 100),
+      roi_index: roi,
+      verdict,
       farm_cost_usd: base.usd,
       farm_cost_low_usd: low.usd,
       farm_cost_high_usd: high.usd,
@@ -783,13 +868,15 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
       return { slug: p.slug, name: p.name, category: p.category, tvl_usd: p.tvl_usd, disposition: r.disposition, reason: r.reason };
     });
 
-  /** B2. The verdict per row, from the board rows only (ROI index, stablecoin flag, TVL, age,
-   *  7-day change). The verdict lives in data.js, never in board.json. */
+  /** B2. The verdict per row, read from the board rows (each row carries its own `verdict`
+   *  field): data.js only presents it again, with the rule and the reasons, so the board and
+   *  the dashboard cannot disagree. The rule itself is unchanged, so the counts are the same
+   *  as before. */
   const verdictBySlug: Record<string, Verdict> = {};
   const verdictReasons: Record<string, string> = {};
   const verdictCounts = { farm: 0, thin: 0, skip: 0 };
   for (const r of board) {
-    const v = verdictFor(r);
+    const v = r.verdict;
     verdictBySlug[r.slug] = v;
     verdictReasons[r.slug] = verdictReason(r, v);
     verdictCounts[v]++;
