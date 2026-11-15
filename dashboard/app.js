@@ -96,7 +96,7 @@
       '<p>TVL ' + money(r.tvl_usd) + ' · 7-day change ' + (r.change_7d == null ? 'not recorded' : (r.change_7d > 0 ? '+' : '') + r.change_7d + '%') +
       ' · listed ' + (r.age_days == null ? 'date not recorded' : r.age_days + ' days ago') +
       ' · implied value <b>' + money(r.implied_value_usd) + '</b> · ROI index <b>' + r.roi_index + '</b> (median = 100).</p>' +
-      '<p><b>How the implied value is built:</b> curve $' + (m.curve_usd != null ? money(m.curve_usd) : '—') +
+      '<p><b>How the implied value is built:</b> curve ' + (m.curve_usd != null ? money(m.curve_usd) : '—') +
       ' × growth ' + (m.growth_multiplier != null ? m.growth_multiplier.toFixed(3) : '—') +
       ' × maturity ' + (m.maturity_multiplier != null ? m.maturity_multiplier.toFixed(3) : '—') +
       ' × category ' + (m.category_factor != null ? m.category_factor.toFixed(3) : '—') +
