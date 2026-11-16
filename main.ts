@@ -110,10 +110,18 @@ for (const name of shots) {
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
+const ridge = radar.fit.ridge;
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored\n` +
     `token radar: fit n=${radar.fit.comps_after} (of ${radar.fit.comps_before} with a value), intercept=${radar.fit.intercept.toFixed(4)}, slope=${radar.fit.slope.toFixed(4)}, R2=${radar.fit.r2.toFixed(4)}\n` +
     `token radar: LOO median APE=${(radar.fit.loo_median_ape * 100).toFixed(2)}%, p25=${(radar.fit.loo_p25_ape * 100).toFixed(2)}%, p75=${(radar.fit.loo_p75_ape * 100).toFixed(2)}%, median fold=${radar.fit.median_fold_error.toFixed(2)}x\n` +
+    (ridge === null
+      ? `token radar: ridge: none (fallback)\n`
+      : `token radar: ridge lambda=${ridge.lambda}, R2 in-sample=${ridge.r2_insample.toFixed(4)}, coefs=[${ridge.coefs.map((c) => c.toFixed(4)).join(', ')}]\n` +
+        `token radar: ridge nested LOO median APE=${(ridge.loo.median_ape * 100).toFixed(2)}%, p25=${(ridge.loo.p25_ape * 100).toFixed(2)}%, p75=${(ridge.loo.p75_ape * 100).toFixed(2)}%, median fold=${ridge.loo.median_fold.toFixed(2)}x\n` +
+        `token radar: ridge time-split train ${ridge.timesplit.train_n} (age ${ridge.timesplit.train_age_min}-${ridge.timesplit.train_age_max}d) -> test ${ridge.timesplit.test_n} (age ${ridge.timesplit.test_age_min}-${ridge.timesplit.test_age_max}d): median APE=${(ridge.timesplit.median_ape * 100).toFixed(2)}%, median fold=${ridge.timesplit.median_fold.toFixed(2)}x, median signed log error=${ridge.timesplit.median_signed_log_error.toFixed(3)}\n` +
+        `token radar: OLS time-split median APE=${(radar.fit.ols_timesplit.median_ape * 100).toFixed(2)}%, median fold=${radar.fit.ols_timesplit.median_fold.toFixed(2)}x, median signed log error=${radar.fit.ols_timesplit.median_signed_log_error.toFixed(3)}\n` +
+        `token radar: bootstrap ${ridge.bootstrap.resamples}x: median band fold=${ridge.bootstrap.median_band_fold.toFixed(2)}x, band at median TVL $${Math.round(ridge.bootstrap.median_tvl_usd).toLocaleString('en-US')} = $${Math.round(ridge.bootstrap.band_at_median_tvl_low).toLocaleString('en-US')}–$${Math.round(ridge.bootstrap.band_at_median_tvl_high).toLocaleString('en-US')} (${ridge.bootstrap.band_at_median_tvl_fold.toFixed(2)}x)\n`) +
     `token radar: clean pre-token=${radar.clean_size}, watchlist on board=${radar.watchlist_size}, fallback=${radar.fit.fallback}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')}, ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
