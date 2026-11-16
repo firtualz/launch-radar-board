@@ -1,26 +1,297 @@
-body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;margin:0 auto;max-width:1100px;padding:16px 20px;color:#1a1a1a;background:#fff;line-height:1.45}
-h1{font-size:26px;margin:0 0 4px}h2{font-size:19px;margin:28px 0 8px}h3{font-size:15px;margin:16px 0 4px}
-p{margin:6px 0}.note{color:#444;font-size:14px}
-#validation{border:1px solid #999;background:#f7f7f2;padding:12px 14px;margin:14px 0}
-#validation h2{margin:0 0 6px;font-size:16px}
-#validation .eq{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px}
-#validation .yard{font-weight:700}
-#validation .foot{font-size:12px;color:#555}
-.judge-note{border:2px solid #333;background:#fffbe6;padding:12px 14px;margin:0 0 14px}
-.judge-note h2{margin:0 0 6px;font-size:16px}
-#views{margin:10px 0}#views a{margin-right:14px}
-#controls{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:12px 0}
-#controls label{font-size:13px}#controls select,#controls input{font:inherit;padding:2px 4px}
-table{border-collapse:collapse;width:100%;font-size:13px}
-th,td{border-bottom:1px solid #ddd;padding:5px 7px;text-align:left;vertical-align:top}
-th{background:#f0f0ea}
-tbody tr:hover{background:#f6f6f0}
-td.num,th.num{text-align:right}
-a{color:#0645ad}
-#detail{border:1px solid #999;padding:12px 14px;margin:18px 0;background:#fbfbf8}
-#detail h2{margin-top:0}
-#detail ol{margin:6px 0;padding-left:22px}
-#detail .flag{color:#8a0000;font-weight:700}
-.badge{display:inline-block;background:#e8e8dd;border-radius:3px;padding:0 5px;font-size:12px}
-#audit-wrap table{font-size:12px}
-footer{border-top:1px solid #ccc;margin-top:24px;padding-top:8px;font-size:12px;color:#555}
+/* Token Radar dashboard (radar-3). Token-based, no framework, no network.
+   Tokens first, then base, then components. Patterns follow the classless-CSS
+   school (MVP.css / new.css): a system font stack, a spacing scale, colour
+   tokens, and plain table styling — written for this page's classed markup,
+   not vendored. */
+
+:root{
+  --ink:#14213d;
+  --ink-soft:#1e3a5f;
+  --paper:#faf9f6;
+  --card:#ffffff;
+  --line:#e3e1d8;
+  --line-strong:#c9c6b8;
+  --text:#1c1a15;
+  --muted:#5d5b52;
+  --accent:#0f766e;
+  --accent-ink:#0b5e57;
+  --accent-soft:#e2f0ee;
+  --note-bg:#fff7d6;
+  --note-line:#b89b00;
+  --farm-bg:#dcfce7;
+  --farm-ink:#166534;
+  --thin-bg:#fef3c7;
+  --thin-ink:#92400e;
+  --skip-bg:#e5e7eb;
+  --skip-ink:#374151;
+  --flag:#8a0000;
+  --radius:10px;
+  --space-1:4px;
+  --space-2:8px;
+  --space-3:12px;
+  --space-4:16px;
+  --space-5:24px;
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+
+*{box-sizing:border-box}
+
+body{
+  font-family:var(--font);
+  margin:0 auto;
+  max-width:1120px;
+  padding:var(--space-4) 20px var(--space-5);
+  color:var(--text);
+  background:var(--paper);
+  line-height:1.5;
+}
+
+h1{font-size:26px;margin:0 0 4px}
+h2{font-size:19px;margin:24px 0 8px}
+h3{font-size:15px;margin:16px 0 4px}
+p{margin:6px 0}
+a{color:var(--accent)}
+a:hover{color:var(--accent-ink)}
+
+/* Header: a dark ink band, so the page reads as a product at one look. */
+header{
+  background:var(--ink);
+  color:#fff;
+  border-radius:var(--radius);
+  padding:20px 22px 16px;
+  margin-bottom:var(--space-4);
+}
+header h1{
+  font-size:30px;
+  line-height:1.15;
+  margin:0 0 6px;
+  letter-spacing:-.01em;
+}
+header #subtitle{
+  margin:0 0 8px;
+  font-size:16px;
+  color:#cfe0dc;
+}
+header .note{
+  margin:0;
+  font-size:13.5px;
+  color:#aebfd0;
+}
+header .note b{color:#fff}
+
+/* Validation panel: a white card; the judge note inside it keeps its warm tint. */
+#validation{
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:var(--space-4) 18px;
+  margin:0 0 var(--space-4);
+  box-shadow:0 1px 3px rgba(20,33,61,.08);
+}
+#validation h2{margin:0 0 var(--space-2);font-size:19px}
+#validation .eq{
+  font-family:var(--mono);
+  font-size:13px;
+  background:var(--accent-soft);
+  border-radius:6px;
+  padding:8px 10px;
+  overflow-x:auto;
+}
+#validation .foot{font-size:12px;color:var(--muted)}
+
+.judge-note{
+  border:2px solid var(--note-line);
+  background:var(--note-bg);
+  border-radius:var(--radius);
+  padding:var(--space-3) 14px;
+  margin:0 0 var(--space-4);
+}
+#validation .judge-note h2{margin:0 0 6px;font-size:16px}
+#validation .judge-note p{font-size:14px}
+
+/* Key numbers as a stat strip: the validation headline, at a glance. */
+.stats{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:10px;
+  margin:10px 0 4px;
+}
+.stat{
+  background:var(--paper);
+  border:1px solid var(--line);
+  border-radius:8px;
+  padding:10px 12px;
+}
+.stat-v{
+  display:block;
+  font-size:22px;
+  font-weight:700;
+  color:var(--accent-ink);
+  line-height:1.2;
+  font-variant-numeric:tabular-nums;
+}
+.stat-l{
+  display:block;
+  font-size:12px;
+  color:var(--muted);
+  margin-top:2px;
+}
+
+/* Views nav: pill links. */
+#views{margin:2px 0 12px}
+#views a{
+  display:inline-block;
+  margin:0 6px 6px 0;
+  padding:5px 12px;
+  border-radius:999px;
+  background:var(--accent-soft);
+  color:var(--accent-ink);
+  font-weight:600;
+  font-size:13.5px;
+  text-decoration:none;
+}
+#views a:hover{background:#cde6e2}
+
+/* Sort and filter controls: one card, controls in a row. */
+#controls{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  align-items:center;
+  background:var(--card);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:10px 12px;
+  margin:0 0 var(--space-3);
+}
+#controls label{font-size:13px;color:var(--muted)}
+#controls select,
+#controls input{
+  font:inherit;
+  font-size:13.5px;
+  color:var(--text);
+  padding:4px 6px;
+  border:1px solid var(--line-strong);
+  border-radius:6px;
+  background:#fff;
+}
+#controls select:focus,
+#controls input:focus{outline:2px solid var(--accent);outline-offset:1px}
+#count{font-size:13px;color:var(--muted);margin:0}
+
+/* Board table: sticky header, zebra rows, tabular numbers. */
+table{
+  border-collapse:collapse;
+  width:100%;
+  font-size:13.5px;
+  background:var(--card);
+}
+th,td{
+  border-bottom:1px solid var(--line);
+  padding:7px 8px;
+  text-align:left;
+  vertical-align:top;
+}
+thead th{
+  position:sticky;
+  top:0;
+  background:#eef2f1;
+  z-index:1;
+  border-bottom:2px solid var(--line-strong);
+  font-size:12.5px;
+  text-transform:uppercase;
+  letter-spacing:.02em;
+  color:var(--ink-soft);
+}
+tbody tr:nth-child(even){background:#f7f6f1}
+tbody tr:hover{background:#eef2ef}
+td.num,
+th.num{
+  text-align:right;
+  font-variant-numeric:tabular-nums;
+}
+
+/* Verdict chips: farm green, thin amber, skip grey. */
+.chip{
+  display:inline-block;
+  border-radius:999px;
+  padding:1px 9px;
+  font-size:12px;
+  font-weight:700;
+  line-height:1.6;
+  white-space:nowrap;
+}
+.chip-farm{background:var(--farm-bg);color:var(--farm-ink)}
+.chip-thin{background:var(--thin-bg);color:var(--thin-ink)}
+.chip-skip{background:var(--skip-bg);color:var(--skip-ink)}
+
+.badge{
+  display:inline-block;
+  background:#fde8e8;
+  color:var(--flag);
+  border-radius:4px;
+  padding:0 5px;
+  font-size:12px;
+  font-weight:600;
+}
+.band-small{
+  font-size:11px;
+  color:var(--muted);
+  white-space:nowrap;
+}
+
+/* Detail view: a card with the band bar. */
+#detail{
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:var(--space-4) 18px;
+  margin:18px 0;
+  background:var(--card);
+  box-shadow:0 1px 3px rgba(20,33,61,.08);
+}
+#detail h2{margin-top:0;font-size:21px}
+#detail ol{margin:8px 0;padding-left:22px}
+#detail ol li{margin-bottom:6px}
+#detail .flag{color:var(--flag);font-weight:700}
+
+.band{margin:12px 0 4px}
+.band-track{
+  position:relative;
+  height:10px;
+  border-radius:999px;
+  background:linear-gradient(90deg,#d3e8e5,#0f766e);
+}
+.band-marker{
+  position:absolute;
+  top:-3px;
+  width:3px;
+  height:16px;
+  background:var(--ink);
+  transform:translateX(-50%);
+  border-radius:2px;
+}
+.band-label{
+  font-size:12px;
+  color:var(--muted);
+  margin-top:5px;
+}
+
+/* Audit and research note. */
+#audit-wrap h2{font-size:19px}
+#audit-wrap table{font-size:12.5px}
+#research-view h2{
+  font-size:21px;
+  border-bottom:2px solid var(--accent);
+  padding-bottom:6px;
+}
+#research-view h3{font-size:15.5px;margin:18px 0 4px;color:var(--ink-soft)}
+#research-view li{margin-bottom:6px}
+
+footer{
+  border-top:1px solid var(--line-strong);
+  margin-top:28px;
+  padding-top:10px;
+  font-size:12px;
+  color:var(--muted);
+}

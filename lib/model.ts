@@ -1,4 +1,4 @@
-// The token radar's model (round 1): one snapshot of the protocol universe in, one ranked board out.
+// The token radar's model (radar-3): one snapshot of the protocol universe in, one ranked board out.
 //
 // The board is CLEAN: the watchlist exclusion logic applies to every row, not just the watchlist.
 // A protocol is dropped when it is an exchange, a bridge, a liquid staking/restaking product, a
@@ -6,13 +6,26 @@
 // implied value of its launch, fitted from the protocols that already trade (the comps).
 //
 //   comps      = mcap_usd > 0 and tvl_usd > 0, minus the excluded categories, minus a market-cap/TVL
-//                ratio outside [0.005, 5]  (85 of 128)
-//   curve      = 10 ^ (a + b * log10(tvl_usd)), a and b fitted by OLS on the comps in log space
-//   growth     = clamp(change_7d, -60, 120) per cent, weight 0.5; null change means no growth
-//   maturity   = 0.6 + min(age_days, 1095) / 1095 * 0.4   (age unknown: 365 days)
-//   category   = 1 + (median ratio of the category / median ratio of all comps - 1) * n / (n + 5),
-//                only for categories with 5 or more comps, capped at +-25%
-//   implied    = max(1, round(curve * clamp(growth * maturity * category, 0.5, 2.0)))
+//                ratio outside [0.005, 5]  (81 of 128)
+//   model      = joint ridge regression in log space: log10(mcap) on [log10(TVL), log10(age),
+//                change_7d, log10(nChains), 7 category dummies (Dexs is the reference)], features
+//                standardised, lambda by 5-fold CV. The OLS log-log curve (radar-2) is kept as
+//                the reported baseline: before/after on the same comps.
+//   implied    = 10 ^ ridge prediction, rounded; a 90% bootstrap band (1000 case resamples,
+//                lambda fixed) rides on every row. No post-hoc multipliers: age, growth and
+//                category live inside the ridge as features, not as factors bolted on after it.
+//   coverage   = every eligible pre-token protocol: 202 rows (40 watchlist + 162 others). That is
+//                ALL of them — 342 strict pre-token protocols minus 140 dropped, and the snapshot
+//                holds nothing below $5M TVL. A looser count (mcap null only, 614) would add 272
+//                protocols that already have a token (a gecko_id or a symbol, e.g. AAVE, AERO):
+//                they trade, so they are live, not pre-token, and the board must not rank them.
+//
+// Honest ceiling (nested leave-one-out on the 81 comps): ridge R² 0.425, median error 77.6%,
+// median fold 2.93×. Time-split (fit the 42 comps listed longest ago, test the 19 newest):
+// median error 66.4%, median fold 2.97×, and the ridge UNDER-predicts the newest listings by
+// ~3× — newer launches trade at higher multiples than the older comps the curve was fitted
+// on. The error is protocol-level noise, not curve uncertainty: the bootstrap 90% band at
+// median TVL is only ~1.8× wide. Treat every implied value as a yardstick, not a price target.
 //
 // When the comps are too few (< 30) or the fit fails, the model falls back to the starter's formula
 // (0.25 * TVL, growth and maturity only) and says so in the validation record. No protocol name is
@@ -67,7 +80,7 @@ export const COSTS: CostTable = {
 };
 
 /** The model's version label: the dashboard names it and the rules quote it. */
-export const MODEL_VERSION = 'radar-2';
+export const MODEL_VERSION = 'radar-3';
 
 /** The categories the clean board drops, wherever they appear. */
 export const EXCLUDED_CATEGORIES = new Set([
@@ -117,11 +130,19 @@ export interface BoardRow {
   age_days: number | null;
   implied_value_usd: number;
   model: {
+    /** The ridge's point prediction for this row, in USD (10 ^ log_pred). */
     curve_usd: number;
-    growth_multiplier: number;
-    maturity_multiplier: number;
-    category_factor: number;
-    combined_multiplier: number;
+    /** The 90% bootstrap band around the point prediction, in USD (low / high). */
+    band_low_usd: number;
+    band_high_usd: number;
+    /** band_high_usd / band_low_usd: how wide the band is, in fold terms. */
+    band_fold: number;
+    /** The ridge's prediction in log10 USD. */
+    log_pred: number;
+    /** Per-feature contributions to log_pred, in dex (coefficient × standardised feature),
+     *  summed with the fit's y_mean they give log_pred. The seven category dummies are
+     *  aggregated into one `category` contribution. */
+    parts: { log_tvl: number; log_age: number; change_7d: number; log_n_chains: number; category: number };
     age_days: number | null;
   };
   roi_index: number;
@@ -137,7 +158,72 @@ export interface BoardRow {
   farm_steps: string[];
 }
 
-/** The fit and the validation numbers, as the dashboard's validation panel states them. */
+/** One validation slice: the same error statistics, whatever the holdout. All errors are in
+ *  levels (APE = |predicted − actual| / actual; fold = 10^|log10(predicted / actual)|). */
+export interface ValidationSlice {
+  n: number;
+  median_ape: number;
+  p25_ape: number;
+  p75_ape: number;
+  mean_ape: number;
+  median_fold: number;
+  p25_fold: number;
+  p75_fold: number;
+}
+
+/** A walk-forward split: fit the comps listed longest ago, test the most recently listed ones.
+ *  `median_signed_log_error` is the median of (log10 predicted − log10 actual) on the test set:
+ *  negative means the model under-predicts the newest listings. */
+export interface TimeSplit {
+  train_n: number;
+  test_n: number;
+  train_age_min: number;
+  train_age_max: number;
+  test_age_min: number;
+  test_age_max: number;
+  lambda: number;
+  median_ape: number;
+  p25_ape: number;
+  p75_ape: number;
+  mean_ape: number;
+  median_fold: number;
+  median_signed_log_error: number;
+}
+
+/** The ridge fit and its validation numbers, as the dashboard's validation panel states them.
+ *  `r2_insample` is the in-sample R² of the full fit (optimistic by construction); the honest
+ *  numbers are the nested leave-one-out slice and the time-split. */
+export interface RidgeReport {
+  lambda: number;
+  r2_insample: number;
+  /** Feature names in order, and the standardised coefficients, the per-feature means and SDs
+   *  and the mean of log10(mcap) — everything the detail view needs to rebuild one row's
+   *  prediction from its features. */
+  feature_names: string[];
+  coefs: number[];
+  mu: number[];
+  sd: number[];
+  y_mean: number;
+  /** Nested leave-one-out: for each comp, lambda is re-chosen by 5-fold CV on the other 80,
+   *  the ridge is refit, and the held-out comp is predicted. */
+  loo: ValidationSlice;
+  timesplit: TimeSplit;
+  /** Bootstrap bands: 1000 case resamples of the comps, the ridge refit at the full-data
+   *  lambda each time; `median_band_fold` is the median 90% band width (high / low) over the
+   *  board's rows. */
+  bootstrap: {
+    resamples: number;
+    median_band_fold: number;
+    median_tvl_usd: number;
+    band_at_median_tvl_low: number;
+    band_at_median_tvl_high: number;
+    band_at_median_tvl_fold: number;
+  };
+}
+
+/** The fit and the validation numbers, as the dashboard's validation panel states them.
+ *  The top-level OLS fields are the radar-2 baseline (the before side of the comparison);
+ *  `ridge` is the radar-3 model the board is priced with. */
 export interface FitReport {
   comps_before: number;
   comps_after: number;
@@ -154,9 +240,11 @@ export interface FitReport {
   median_fold_error: number;
   p25_fold_error: number;
   p75_fold_error: number;
-  category_factors: Record<string, number>;
+  /** The OLS baseline on the same walk-forward split the ridge is tested on. */
+  ols_timesplit: TimeSplit;
+  ridge: RidgeReport | null;
   fallback: boolean;
-  /** The same fit on all 128 comps with a value, no filter: the before side of the filter effect. */
+  /** The same OLS fit on all 128 comps with a value, no filter: the before side of the filter effect. */
   unfiltered: {
     n: number;
     intercept: number;
@@ -198,6 +286,16 @@ export interface RadarData {
   watchlist: string[];
   clean_size: number;
   dropped_clean: number;
+  /** Coverage accounting, from the snapshot alone: strict pre-token (no market cap, no
+   *  CoinGecko id, no symbol), how many of them the board ranks, how many it drops, and how
+   *  many protocols record no market cap yet DO have a token (a gecko_id or a symbol) — they
+   *  trade, so they are live, not pre-token, and the board does not rank them. */
+  coverage: {
+    pre_token: number;
+    eligible: number;
+    dropped: number;
+    live_token_no_mcap: number;
+  };
   rows: BoardRow[];
   audit: AuditRow[];
   /** B2. The verdict, per slug, with the rule that fired and the counts: surfaced from the
@@ -389,6 +487,311 @@ function percentile(sorted: number[], q: number): number {
   return sorted[lo]! + (sorted[hi]! - sorted[lo]!) * (idx - lo);
 }
 
+/** The ridge's features, in order. The seven category dummies use Dexs as the reference (no
+ *  dummy): this set beat the count-derived alternatives on nested leave-one-out in the
+ *  radar-3 research (R² 0.425 vs 0.378 for the top-8-by-count set), so it is the tested set,
+ *  not a guess. Category names are generic labels, never protocol names. */
+export const RIDGE_DUMMY_CATEGORIES = [
+  'Lending',
+  'Yield',
+  'Derivatives',
+  'RWA',
+  'Yield Aggregator',
+  'Risk Curators',
+  'Onchain Capital Allocator',
+];
+export const RIDGE_FEATURE_NAMES = [
+  'log_tvl',
+  'log_age',
+  'change_7d',
+  'log_n_chains',
+  ...RIDGE_DUMMY_CATEGORIES.map((c) => `cat:${c}`),
+];
+/** The lambda grid the 5-fold CV searches, as in the research. */
+export const RIDGE_LAMBDAS = [0.1, 0.3, 1, 3, 10, 30, 100, 300];
+/** Bootstrap resamples for the 90% bands. */
+export const BOOTSTRAP_RESAMPLES = 1000;
+
+/** A small deterministic PRNG (mulberry32): the CV folds and the bootstrap resamples must be
+ *  the same on every run, or the program's two runs would write different bytes. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function meanOf(xs: number[]): number {
+  return xs.reduce((s, v) => s + v, 0) / xs.length;
+}
+
+function stdOf(xs: number[], mu: number): number {
+  return Math.sqrt(xs.reduce((s, v) => s + (v - mu) * (v - mu), 0) / xs.length);
+}
+
+/** Solve A x = b by Gaussian elimination with partial pivoting. A is small (11×11) and
+ *  regularised, so this is exact enough for the fit. */
+function solveLinear(A: number[][], b: number[]): number[] {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]!]);
+  for (let col = 0; col < n; col++) {
+    let piv = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(M[r]![col]!) > Math.abs(M[piv]![col]!)) piv = r;
+    if (piv !== col) {
+      const tmp = M[col]!;
+      M[col] = M[piv]!;
+      M[piv] = tmp;
+    }
+    const d = M[col]![col]!;
+    if (d === 0) continue;
+    for (let r = col + 1; r < n; r++) {
+      const f = M[r]![col]! / d;
+      for (let c = col; c <= n; c++) M[r]![c] = M[r]![c]! - f * M[col]![c]!;
+    }
+  }
+  const x = new Array<number>(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = M[r]![n]!;
+    for (let c = r + 1; c < n; c++) s -= M[r]![c]! * x[c]!;
+    x[r] = M[r]![r]! === 0 ? 0 : s / M[r]![r]!;
+  }
+  return x;
+}
+
+/** One protocol's ridge features, in RIDGE_FEATURE_NAMES order. Age is at least 1 day; a missing
+ *  listing date takes the comps' median age. The 7-day change is clipped to ±50% and null means 0. */
+export function ridgeFeatures(p: SnapshotProtocol, age: number | null, medianAge: number): number[] {
+  const ageDays = age === null ? medianAge : Math.max(1, age);
+  const chg = Math.min(50, Math.max(-50, finite(p.change_7d, 0))) / 100;
+  const feats = [
+    Math.log10(Math.max(1, p.tvl_usd)),
+    Math.log10(ageDays),
+    chg,
+    Math.log10(Math.max(1, p.chains.length)),
+  ];
+  for (const cat of RIDGE_DUMMY_CATEGORIES) feats.push(p.category === cat ? 1 : 0);
+  return feats;
+}
+
+export interface RidgeFit {
+  mu: number[];
+  sd: number[];
+  yMean: number;
+  beta: number[];
+}
+
+/** The ridge fit: standardise each feature (population SD; a constant column's SD reads as 1),
+ *  centre the target, and solve (Xs'Xs + λI) β = Xs'(y − ȳ). No penalty on the intercept: it
+ *  is the centred mean. */
+export function ridgeFit(X: number[][], y: number[], lambda: number): RidgeFit {
+  const d = X[0]!.length;
+  const mu: number[] = [];
+  const sd: number[] = [];
+  for (let j = 0; j < d; j++) {
+    const col = X.map((row) => row[j]!);
+    const m = meanOf(col);
+    const s = stdOf(col, m);
+    mu.push(m);
+    sd.push(s === 0 ? 1 : s);
+  }
+  const yMean = meanOf(y);
+  const A: number[][] = Array.from({ length: d }, () => new Array<number>(d).fill(0));
+  const b: number[] = new Array<number>(d).fill(0);
+  for (let i = 0; i < X.length; i++) {
+    const xs = X[i]!.map((v, j) => (v - mu[j]!) / sd[j]!);
+    const yc = y[i]! - yMean;
+    for (let j = 0; j < d; j++) {
+      b[j] = b[j]! + xs[j]! * yc;
+      for (let k = 0; k < d; k++) A[j]![k] = A[j]![k]! + xs[j]! * xs[k]!;
+    }
+  }
+  for (let j = 0; j < d; j++) A[j]![j] = A[j]![j]! + lambda;
+  return { mu, sd, yMean, beta: solveLinear(A, b) };
+}
+
+/** The prediction broken into per-feature contributions, in dex, for the detail view: the four
+ *  numeric features separately, the seven dummies aggregated into one `category` contribution. */
+export function ridgeParts(fit: RidgeFit, x: number[]): {
+  log_pred: number;
+  parts: { log_tvl: number; log_age: number; change_7d: number; log_n_chains: number; category: number };
+} {
+  const c = (j: number): number => fit.beta[j]! * ((x[j]! - fit.mu[j]!) / fit.sd[j]!);
+  let category = 0;
+  for (let j = 4; j < x.length; j++) category += c(j);
+  const log_pred = fit.yMean + c(0) + c(1) + c(2) + c(3) + category;
+  return { log_pred, parts: { log_tvl: c(0), log_age: c(1), change_7d: c(2), log_n_chains: c(3), category } };
+}
+
+/** The ridge's prediction for one feature vector, in log10 USD. */
+export function ridgePredict(fit: RidgeFit, x: number[]): number {
+  return ridgeParts(fit, x).log_pred;
+}
+
+/** 5-fold cross-validated mean squared error (in log space) for one lambda. The folds come
+ *  from one seeded shuffle, so the choice is deterministic. */
+export function cvLambda(X: number[][], y: number[], lambda: number, seed = 0): number {
+  const rng = mulberry32(seed);
+  const idx = X.map((_, i) => i);
+  for (let i = idx.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [idx[i], idx[j]] = [idx[j]!, idx[i]!];
+  }
+  let sse = 0;
+  let n = 0;
+  for (let fold = 0; fold < 5; fold++) {
+    const te = idx.filter((_, k) => k % 5 === fold);
+    const tr = idx.filter((_, k) => k % 5 !== fold);
+    const fit = ridgeFit(
+      tr.map((i) => X[i]!),
+      tr.map((i) => y[i]!),
+      lambda,
+    );
+    for (const i of te) {
+      const e = ridgePredict(fit, X[i]!) - y[i]!;
+      sse += e * e;
+      n++;
+    }
+  }
+  return sse / n;
+}
+
+/** The lambda the 5-fold CV picks: the smallest of the grid on a tie (the grid is ascending,
+ *  and the first minimum wins). */
+export function pickLambda(X: number[][], y: number[]): number {
+  let best = RIDGE_LAMBDAS[0]!;
+  let bestErr = Infinity;
+  for (const lam of RIDGE_LAMBDAS) {
+    const err = cvLambda(X, y, lam);
+    if (err < bestErr) {
+      bestErr = err;
+      best = lam;
+    }
+  }
+  return best;
+}
+
+/** Error statistics for predictions already in log10 USD against actuals in log10 USD. */
+export function sliceStats(predLog: number[], actLog: number[]): ValidationSlice {
+  const apes: number[] = [];
+  const folds: number[] = [];
+  for (let i = 0; i < predLog.length; i++) {
+    const pred = 10 ** predLog[i]!;
+    const act = 10 ** actLog[i]!;
+    apes.push(Math.abs(pred - act) / act);
+    folds.push(10 ** Math.abs(predLog[i]! - actLog[i]!));
+  }
+  const a = [...apes].sort((x, y) => x - y);
+  const f = [...folds].sort((x, y) => x - y);
+  return {
+    n: predLog.length,
+    median_ape: median(apes),
+    p25_ape: percentile(a, 0.25),
+    p75_ape: percentile(a, 0.75),
+    mean_ape: apes.reduce((s, v) => s + v, 0) / apes.length,
+    median_fold: median(folds),
+    p25_fold: percentile(f, 0.25),
+    p75_fold: percentile(f, 0.75),
+  };
+}
+
+/** Nested leave-one-out for the ridge: for each comp, lambda is re-chosen by 5-fold CV on the
+ *  other comps, the ridge is refit, and the held-out comp is predicted. */
+export function looRidge(X: number[][], y: number[]): ValidationSlice {
+  const preds: number[] = [];
+  for (let i = 0; i < y.length; i++) {
+    const trX = X.filter((_, j) => j !== i);
+    const trY = y.filter((_, j) => j !== i);
+    const lam = pickLambda(trX, trY);
+    const fit = ridgeFit(trX, trY, lam);
+    preds.push(ridgePredict(fit, X[i]!));
+  }
+  return sliceStats(preds, y);
+}
+
+/** The walk-forward split for one model kind: fit the comps listed longest ago, test the most
+ *  recently listed ones. `ages` are the comps' ages in days (null when unlisted — those comps
+ *  never enter either side). */
+export function walkForward(X: number[][], y: number[], ages: (number | null)[], kind: 'ols' | 'ridge'): TimeSplit {
+  const dated = X.map((_, i) => i)
+    .filter((i) => ages[i] !== null)
+    .sort((a, b) => (ages[a] as number) - (ages[b] as number));
+  const trainN = Math.floor(0.7 * dated.length);
+  const testIdx = dated.slice(0, dated.length - trainN);
+  const trainIdx = dated.slice(dated.length - trainN);
+  const trainAges = trainIdx.map((i) => ages[i] as number);
+  const testAges = testIdx.map((i) => ages[i] as number);
+  let preds: number[];
+  let lambda = 0;
+  if (kind === 'ols') {
+    const xs = trainIdx.map((i) => X[i]![0]!);
+    const ys = trainIdx.map((i) => y[i]!);
+    const f = ols(xs, ys);
+    preds = testIdx.map((i) => f.a + f.b * X[i]![0]!);
+  } else {
+    const trX = trainIdx.map((i) => X[i]!);
+    const trY = trainIdx.map((i) => y[i]!);
+    lambda = pickLambda(trX, trY);
+    const fit = ridgeFit(trX, trY, lambda);
+    preds = testIdx.map((i) => ridgePredict(fit, X[i]!));
+  }
+  const stats = sliceStats(preds, testIdx.map((i) => y[i]!));
+  const signed = testIdx.map((i, k) => preds[k]! - y[i]!).sort((a, b) => a - b);
+  return {
+    train_n: trainIdx.length,
+    test_n: testIdx.length,
+    train_age_min: Math.min(...trainAges),
+    train_age_max: Math.max(...trainAges),
+    test_age_min: Math.min(...testAges),
+    test_age_max: Math.max(...testAges),
+    lambda,
+    median_ape: stats.median_ape,
+    p25_ape: stats.p25_ape,
+    p75_ape: stats.p75_ape,
+    mean_ape: stats.mean_ape,
+    median_fold: stats.median_fold,
+    median_signed_log_error: median(signed),
+  };
+}
+
+/** Bootstrap 90% bands for the ridge's predictions: `resamples` case resamples of the comps,
+ *  the ridge refit at `lambda` each time, every row predicted under each refit. Returns the
+ *  5th/95th percentiles per row and at the median feature vector, all in log10 USD. */
+export function bootstrapBands(
+  X: number[][],
+  y: number[],
+  lambda: number,
+  rowX: number[][],
+  medianX: number[],
+  resamples = BOOTSTRAP_RESAMPLES,
+): { rowLow: number[]; rowHigh: number[]; medianLow: number; medianHigh: number } {
+  const rng = mulberry32(20261114);
+  const n = y.length;
+  const rowPreds: number[][] = rowX.map(() => []);
+  const medPreds: number[] = [];
+  for (let r = 0; r < resamples; r++) {
+    const idx: number[] = [];
+    for (let i = 0; i < n; i++) idx.push(Math.floor(rng() * n));
+    const fit = ridgeFit(
+      idx.map((i) => X[i]!),
+      idx.map((i) => y[i]!),
+      lambda,
+    );
+    rowX.forEach((x, k) => rowPreds[k]!.push(ridgePredict(fit, x)));
+    medPreds.push(ridgePredict(fit, medianX));
+  }
+  const q = (arr: number[], p: number): number => percentile([...arr].sort((a, b) => a - b), p);
+  return {
+    rowLow: rowPreds.map((arr) => q(arr, 0.05)),
+    rowHigh: rowPreds.map((arr) => q(arr, 0.95)),
+    medianLow: q(medPreds, 0.05),
+    medianHigh: q(medPreds, 0.95),
+  };
+}
+
 /** The curve fit and its leave-one-out validation, from the already-filtered comps. */
 export function fitCurve(comps: SnapshotProtocol[]): FitReport {
   const xs = comps.map((p) => Math.log10(p.tvl_usd));
@@ -423,31 +826,25 @@ export function fitCurve(comps: SnapshotProtocol[]): FitReport {
     median_fold_error: 10 ** median(folds),
     p25_fold_error: 10 ** percentile(foldsSorted, 0.25),
     p75_fold_error: 10 ** percentile(foldsSorted, 0.75),
-    category_factors: {},
+    ols_timesplit: {
+      train_n: 0,
+      test_n: 0,
+      train_age_min: 0,
+      train_age_max: 0,
+      test_age_min: 0,
+      test_age_max: 0,
+      lambda: 0,
+      median_ape: 0,
+      p25_ape: 0,
+      p75_ape: 0,
+      mean_ape: 0,
+      median_fold: 0,
+      median_signed_log_error: 0,
+    },
+    ridge: null,
     fallback: false,
     unfiltered: { n: 0, intercept: 0, slope: 0, r2: 0, loo_median_ape: 0, loo_p25_ape: 0, loo_p75_ape: 0, loo_mean_ape: 0, median_fold_error: 0, p25_fold_error: 0, p75_fold_error: 0 },
   };
-}
-
-/** The category factors from the comps: median ratio of the category over the global median ratio,
- *  shrunk by n / (n + 5), capped at +-25%, only for categories with 5 or more comps. */
-export function categoryFactors(comps: SnapshotProtocol[]): Record<string, number> {
-  const ratios = comps.map((p) => (p.mcap_usd as number) / p.tvl_usd);
-  const global = median(ratios);
-  const byCat = new Map<string, number[]>();
-  for (const p of comps) {
-    const key = p.category ?? 'unknown';
-    const arr = byCat.get(key) ?? [];
-    arr.push((p.mcap_usd as number) / p.tvl_usd);
-    byCat.set(key, arr);
-  }
-  const out: Record<string, number> = {};
-  for (const [cat, arr] of [...byCat.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
-    if (arr.length < 5) continue;
-    const raw = 1 + (median(arr) / global - 1) * (arr.length / (arr.length + 5));
-    out[cat] = Math.max(0.75, Math.min(1.25, raw));
-  }
-  return out;
 }
 
 /** The gas price of one transaction on a chain, at the low (0), base (1) or high (2) level. */
@@ -701,6 +1098,39 @@ function roundFit(f: FitReport): void {
   f.median_fold_error = round6(f.median_fold_error);
   f.p25_fold_error = round6(f.p25_fold_error);
   f.p75_fold_error = round6(f.p75_fold_error);
+  const roundSlice = (s: ValidationSlice): void => {
+    s.median_ape = round6(s.median_ape);
+    s.p25_ape = round6(s.p25_ape);
+    s.p75_ape = round6(s.p75_ape);
+    s.mean_ape = round6(s.mean_ape);
+    s.median_fold = round6(s.median_fold);
+    s.p25_fold = round6(s.p25_fold);
+    s.p75_fold = round6(s.p75_fold);
+  };
+  const roundSplit = (t: TimeSplit): void => {
+    t.median_ape = round6(t.median_ape);
+    t.p25_ape = round6(t.p25_ape);
+    t.p75_ape = round6(t.p75_ape);
+    t.mean_ape = round6(t.mean_ape);
+    t.median_fold = round6(t.median_fold);
+    t.median_signed_log_error = round6(t.median_signed_log_error);
+  };
+  roundSplit(f.ols_timesplit);
+  if (f.ridge !== null) {
+    const r = f.ridge;
+    r.r2_insample = round6(r.r2_insample);
+    r.coefs = r.coefs.map(round6);
+    r.mu = r.mu.map(round6);
+    r.sd = r.sd.map(round6);
+    r.y_mean = round6(r.y_mean);
+    roundSlice(r.loo);
+    roundSplit(r.timesplit);
+    r.bootstrap.median_band_fold = round6(r.bootstrap.median_band_fold);
+    r.bootstrap.median_tvl_usd = round6(r.bootstrap.median_tvl_usd);
+    r.bootstrap.band_at_median_tvl_low = round6(r.bootstrap.band_at_median_tvl_low);
+    r.bootstrap.band_at_median_tvl_high = round6(r.bootstrap.band_at_median_tvl_high);
+    r.bootstrap.band_at_median_tvl_fold = round6(r.bootstrap.band_at_median_tvl_fold);
+  }
   const u = f.unfiltered;
   u.intercept = round6(u.intercept);
   u.slope = round6(u.slope);
@@ -742,8 +1172,43 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     p25_fold_error: uf.p25_fold_error,
     p75_fold_error: uf.p75_fold_error,
   };
-  const factors = fallback ? {} : categoryFactors(comps);
-  fit.category_factors = factors;
+  /** The ridge (radar-3), fitted on the same comps as the OLS baseline. The median age fills in
+   *  for the comps with no listing date, in the features and on the board alike. */
+  const compAges = comps.map((p) => ageDays(snapshot.as_of, p.listed_at));
+  const datedAges = compAges.filter((a): a is number => a !== null);
+  const medianAge = datedAges.length > 0 ? median(datedAges) : 365;
+  const compX = comps.map((p, i) => ridgeFeatures(p, compAges[i] ?? null, medianAge));
+  const compY = comps.map((p) => Math.log10(p.mcap_usd as number));
+  fit.ols_timesplit = comps.length >= 10 ? walkForward(compX, compY, compAges, 'ols') : fit.ols_timesplit;
+  let ridge: RidgeFit | null = null;
+  let ridgeLambda = 0;
+  if (!fallback) {
+    ridgeLambda = pickLambda(compX, compY);
+    ridge = ridgeFit(compX, compY, ridgeLambda);
+    const loo = looRidge(compX, compY);
+    const tsRidge = walkForward(compX, compY, compAges, 'ridge');
+    const r2num = compY.reduce((s, v, i) => s + (v - ridgePredict(ridge as RidgeFit, compX[i]!)) ** 2, 0);
+    const r2den = compY.reduce((s, v) => s + (v - meanOf(compY)) ** 2, 0);
+    fit.ridge = {
+      lambda: ridgeLambda,
+      r2_insample: r2den === 0 ? 0 : 1 - r2num / r2den,
+      feature_names: [...RIDGE_FEATURE_NAMES],
+      coefs: ridge.beta,
+      mu: ridge.mu,
+      sd: ridge.sd,
+      y_mean: ridge.yMean,
+      loo,
+      timesplit: tsRidge,
+      bootstrap: {
+        resamples: 0,
+        median_band_fold: 0,
+        median_tvl_usd: 0,
+        band_at_median_tvl_low: 0,
+        band_at_median_tvl_high: 0,
+        band_at_median_tvl_fold: 0,
+      },
+    };
+  }
 
   const clean = snapshot.protocols.filter((p) => isPreToken(p) && !isExcluded(p));
   const chosen = new Map<string, SnapshotProtocol>();
@@ -756,25 +1221,56 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     .sort((a, b) => b.tvl_usd - a.tvl_usd || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
   for (const p of rest) chosen.set(p.slug, p);
 
-  const scored = [...chosen.values()].map((p) => {
+  /** Score every chosen protocol with the ridge (or the starter formula on fallback), then
+   *  bootstrap the band for every row at the full-data lambda. The band is curve uncertainty
+   *  only — the ~3× protocol-level noise is the leave-one-out error, not the band. */
+  const chosenList = [...chosen.values()];
+  const rowX = chosenList.map((p) => ridgeFeatures(p, ageDays(snapshot.as_of, p.listed_at), medianAge));
+  const medianX = compX[0]!.map((_, j) => median(compX.map((row) => row[j]!)));
+  const medianTvl = median(comps.map((p) => p.tvl_usd));
+  let rowLow: number[] = [];
+  let rowHigh: number[] = [];
+  if (ridge !== null) {
+    const bands = bootstrapBands(compX, compY, ridgeLambda, rowX, medianX);
+    rowLow = bands.rowLow;
+    rowHigh = bands.rowHigh;
+    const bandFolds = rowLow.map((lo, i) => 10 ** (rowHigh[i]! - lo));
+    (fit.ridge as RidgeReport).bootstrap = {
+      resamples: BOOTSTRAP_RESAMPLES,
+      median_band_fold: median(bandFolds),
+      median_tvl_usd: medianTvl,
+      band_at_median_tvl_low: 10 ** bands.medianLow,
+      band_at_median_tvl_high: 10 ** bands.medianHigh,
+      band_at_median_tvl_fold: 10 ** (bands.medianHigh - bands.medianLow),
+    };
+  }
+
+  const scored = chosenList.map((p, k) => {
     const age = ageDays(snapshot.as_of, p.listed_at);
-    const rawGrowth = finite(p.change_7d, 0);
-    const growthPct = Math.min(120, Math.max(-60, rawGrowth));
-    const growthMult = 1 + (growthPct / 100) * 0.5;
-    const ageForModel = age ?? 365;
-    const maturityMult = 0.6 + (Math.min(Math.max(ageForModel, 0), 1095) / 1095) * 0.4;
-    const catFactor = factors[p.category ?? ''] ?? 1;
     let curve: number;
-    let combined: number;
-    if (fallback) {
-      curve = p.tvl_usd * 0.25;
-      combined = Math.max(0.5, Math.min(2.0, growthMult * maturityMult));
+    let logPred: number;
+    let parts = { log_tvl: 0, log_age: 0, change_7d: 0, log_n_chains: 0, category: 0 };
+    let bandLow = 0;
+    let bandHigh = 0;
+    if (ridge !== null) {
+      const rp = ridgeParts(ridge, rowX[k]!);
+      logPred = rp.log_pred;
+      parts = rp.parts;
+      curve = 10 ** logPred;
+      bandLow = 10 ** rowLow[k]!;
+      bandHigh = 10 ** rowHigh[k]!;
     } else {
-      curve = 10 ** (fit.intercept + fit.slope * Math.log10(p.tvl_usd));
-      combined = Math.max(0.5, Math.min(2.0, growthMult * maturityMult * catFactor));
+      const growthPct = Math.min(120, Math.max(-60, finite(p.change_7d, 0)));
+      const growthMult = 1 + (growthPct / 100) * 0.5;
+      const ageForModel = age ?? 365;
+      const maturityMult = 0.6 + (Math.min(Math.max(ageForModel, 0), 1095) / 1095) * 0.4;
+      curve = p.tvl_usd * 0.25 * Math.max(0.5, Math.min(2.0, growthMult * maturityMult));
+      logPred = Math.log10(curve);
+      bandLow = curve;
+      bandHigh = curve;
     }
-    const implied = Math.max(1, Math.round(curve * combined));
-    return { p, age, growthPct, growthMult, maturityMult, catFactor, curve, combined, implied };
+    const implied = Math.max(1, Math.round(curve));
+    return { p, age, curve, logPred, parts, bandLow, bandHigh, implied };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
 
@@ -833,10 +1329,17 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
       implied_value_usd: w.implied,
       model: {
         curve_usd: round2(w.curve),
-        growth_multiplier: round4(w.growthMult),
-        maturity_multiplier: round4(w.maturityMult),
-        category_factor: round4(w.catFactor),
-        combined_multiplier: round4(w.combined),
+        band_low_usd: round2(w.bandLow),
+        band_high_usd: round2(w.bandHigh),
+        band_fold: round4(w.bandHigh / w.bandLow),
+        log_pred: round4(w.logPred),
+        parts: {
+          log_tvl: round4(w.parts.log_tvl),
+          log_age: round4(w.parts.log_age),
+          change_7d: round4(w.parts.change_7d),
+          log_n_chains: round4(w.parts.log_n_chains),
+          category: round4(w.parts.category),
+        },
         age_days: w.age,
       },
       roi_index: roi,
@@ -897,6 +1400,14 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     watchlist: [...snapshot.watchlist],
     clean_size: clean.length,
     dropped_clean: snapshot.protocols.filter((p) => isPreToken(p)).length - clean.length,
+    coverage: {
+      pre_token: snapshot.protocols.filter((p) => isPreToken(p)).length,
+      eligible: clean.length,
+      dropped: snapshot.protocols.filter((p) => isPreToken(p)).length - clean.length,
+      live_token_no_mcap: snapshot.protocols.filter(
+        (p) => p.mcap_usd === null && (p.gecko_id !== null || p.symbol !== null),
+      ).length,
+    },
     rows: board,
     audit,
     verdict: {
